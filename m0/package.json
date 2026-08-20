@@ -1,0 +1,13 @@
+{
+  "name": "overtime-survivors-m0",
+  "private": true,
+  "type": "module",
+  "description": "M0 성능 검증 프로토타입 — Canvas 2D 렌더러가 목표 성능을 내는지 판정한다",
+  "scripts": {
+    "serve": "npx --yes serve -l 8080 .",
+    "verify": "node verify.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>야근 서바이버즈 — M0 성능 벤치마크 v2</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; padding:0; height:100%; background:#0d0f14; color:#c8d0dc;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; overflow:hidden; }
+  #stage { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { image-rendering: pixelated; image-rendering: crisp-edges; display:block; }
+  #hud { position:fixed; top:0; left:0; right:0; padding:8px 10px; font-size:11px; line-height:1.5;
+    background:linear-gradient(#0d0f14ee,#0d0f1400); pointer-events:none; white-space:pre; }
+  #hud .ok { color:#7ee787; } #hud .warn { color:#e3b341; } #hud .bad { color:#f85149; }
+  #panel { position:fixed; bottom:0; left:0; right:0; padding:10px; background:#11141bee;
+    border-top:1px solid #232a36; font-size:12px; max-height:52vh; overflow-y:auto; }
+  .row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:8px; }
+  button { background:#1c2230; color:#c8d0dc; border:1px solid #2e3746; border-radius:6px;
+    padding:8px 12px; font:inherit; font-size:12px; cursor:pointer; min-height:38px; }
+  button:active { background:#263044; }
+  button.primary { background:#1f6feb; border-color:#1f6feb; color:#fff; font-weight:600; }
+  button.on { background:#238636; border-color:#238636; color:#fff; }
+  table { border-collapse:collapse; width:100%; font-size:11px; margin-top:6px; }
+  th, td { border:1px solid #232a36; padding:4px 6px; text-align:right; }
+  th { background:#161b24; text-align:center; }
+  td.l, th.l { text-align:left; }
+  .pass { color:#7ee787; font-weight:700; } .fail { color:#f85149; font-weight:700; }
+  #verdict { margin-top:8px; padding:8px; border-radius:6px; background:#161b24; border:1px solid #232a36;
+    font-size:12px; line-height:1.6; white-space:pre-wrap; }
+  #meta { color:#6e7a8a; font-size:10px; margin-top:6px; word-break:break-all; }
+  h3 { margin:10px 0 4px; font-size:12px; color:#8b949e; font-weight:600; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="c"></canvas></div>
+<div id="hud"></div>
+
+<div id="panel">
+  <div class="row">
+    <button class="primary" id="btnAuto">▶ 자동 벤치 실행</button>
+    <button id="btnStop">■ 중지</button>
+    <span style="color:#6e7a8a">적 수:</span>
+    <button data-n="200">200</button>
+    <button data-n="400">400</button>
+    <button data-n="800">800</button>
+    <button data-n="1200">1200</button>
+    <button data-n="1600">1600</button>
+  </div>
+  <div class="row">
+    <button id="tSep" class="on">적 분리 ON</button>
+    <button id="tPart" class="on">파티클 ON</button>
+    <button id="tYsort" class="on">Y정렬 ON</button>
+    <button id="tRender" class="on">렌더 ON</button>
+    <button id="tStand">정지 모드 OFF</button>
+    <button id="tFill">뷰포트 고정</button>
+    <button id="btnCopy">결과 복사</button>
+  </div>
+  <div id="results"></div>
+  <div id="verdict">자동 벤치를 실행하면 TDD §9 기준으로 합격/불합격을 판정합니다.
+PC: 적 800 → 60 FPS   |   모바일: 적 400 → 45 FPS 이상, 긴 프레임 ≤ 5%
+※ '화면 적' 열이 낮으면 부하가 화면에 도달하지 않은 것입니다 — 정지 모드로 재측정하세요.</div>
+  <div id="meta"></div>
+</div>
+
+<script>
+'use strict';
+/* =====================================================================
+   야근 서바이버즈 — M0 성능 검증 프로토타입
+   TDD v0.1의 아키텍처를 그대로 구현한다. 벤치마크 수치가 실제 게임을
+   대표하려면, 벤치마크가 실제 게임과 같은 방식으로 돌아가야 한다.
+     §1 고정 타임스텝 + 시드 PRNG (결정론)
+     §2 480x270 내부 해상도, 정수 배율, 픽셀 스냅
+     §4 SoA Float32Array + 조밀 배열 + swap-remove
+     §5 시스템 실행 순서 고정
+     §6 공간 해시 그리드, 원-원 판정
+     §8 레이어 순서, Y 버킷 정렬, 아틀라스 drawImage
+   ===================================================================== */
+
+// ---------- §2 상수 ----------
+const VIEW_W = 480, VIEW_H = 270;
+const WORLD_W = 2560, WORLD_H = 1440;
+const CELL = 64;
+const COLS = Math.ceil(WORLD_W / CELL), ROWS = Math.ceil(WORLD_H / CELL);
+const NCELL = COLS * ROWS, CELL_CAP = 48;
+
+const MAX_ENEMIES = 2048, MAX_PROJ = 2048, MAX_GEMS = 4096, MAX_PART = 2048;
+const FIXED_DT_MS = 1000 / 60, MAX_CATCHUP = 5;
+
+// ---------- §1.2 시드 PRNG (sfc32) ----------
+function sfc32(a, b, c, d) {
+  return function () {
+    a |= 0; b |= 0; c |= 0; d |= 0;
+    const t = (((a + b) | 0) + d) | 0;
+    d = (d + 1) | 0;
+    a = b ^ (b >>> 9);
+    b = (c + (c << 3)) | 0;
+    c = (c << 21) | (c >>> 11);
+    c = (c + t) | 0;
+    return (t >>> 0) / 4294967296;
+  };
+}
+// §1.2 용도별 스트림 분리. 마스터 시드로부터 스트림별 시드를 파생한다.
+let MASTER_SEED = 0x1234abcd;
+let rngSpawn, rngCos;
+function seedStreams(master) {
+  MASTER_SEED = master >>> 0;
+  const m = MASTER_SEED;
+  rngSpawn = sfc32(m ^ 0x9e3779b9, m ^ 0x243f6a88, m ^ 0xb7e15162, 1); // 시뮬 (검증 대상)
+  rngCos   = sfc32(m ^ 0x85ebca6b, m ^ 0xc2b2ae35, m ^ 0x27d4eb2f, 2); // Cosmetic (검증 제외)
+}
+seedStreams(0x1234abcd);
+
+// ---------- §1.3 결정론 수학: sin 테이블 ----------
+const SIN_BITS = 12, SIN_SIZE = 1 << SIN_BITS, SIN_MASK = SIN_SIZE - 1;
+const TAU = Math.PI * 2, SIN_SCALE = SIN_SIZE / TAU;
+const SIN_TABLE = new Float64Array(SIN_SIZE + 1);
+for (let i = 0; i <= SIN_SIZE; i++) SIN_TABLE[i] = Math.sin((i / SIN_SIZE) * TAU);
+function dSin(r) {
+  const f = r * SIN_SCALE, i = Math.floor(f), t = f - i, i0 = i & SIN_MASK;
+  return SIN_TABLE[i0] + (SIN_TABLE[i0 + 1] - SIN_TABLE[i0]) * t;
+}
+function dCos(r) { return dSin(r + Math.PI / 2); }
+
+// ---------- 32색 팔레트 (PRD §6.2 자리표시자) ----------
+const PALETTE = [
+  '#0d0f14','#1a2b3c','#243447','#2e4258','#3d2b52','#54376e','#7a4a8a','#a05fa0',
+  '#e8875a','#f5b76e','#ffe08a','#fff3c4','#7ee787','#4bb96a','#2e8b57','#1f6feb',
+  '#58a6ff','#a5d6ff','#f85149','#ff7b72','#ffa198','#ffd7d5','#8b949e','#c8d0dc',
+  '#eef2f7','#ffffff','#6e5030','#9c7440','#c49a5c','#3a2418','#5a3a24','#000000'
+];
+
+// ---------- 아틀라스 생성 (실제 파이프라인의 아틀라스를 모사) ----------
+const ATLAS_TILE = 32, ATLAS_COLS = 16;
+const atlas = document.createElement('canvas');
+atlas.width = 512; atlas.height = 512;
+{
+  const a = atlas.getContext('2d');
+  a.imageSmoothingEnabled = false;
+  // 8종 × 4프레임 = 32 스프라이트. 도트 느낌의 단순 도형 + 1px 외곽선(§6.2 규칙)
+  const bodies = [
+    [23, 22], [8, 26], [12, 14], [16, 15],
+    [18, 19], [10, 9], [6, 7], [4, 5]
+  ];
+  for (let type = 0; type < 8; type++) {
+    for (let f = 0; f < 4; f++) {
+      const idx = type * 4 + f;
+      const ox = (idx % ATLAS_COLS) * ATLAS_TILE, oy = ((idx / ATLAS_COLS) | 0) * ATLAS_TILE;
+      const bob = [0, -1, 0, 1][f];
+      const [fill, shade] = bodies[type];
+      a.fillStyle = PALETTE[31]; // 외곽선
+      a.fillRect(ox + 9, oy + 9 + bob, 14, 15);
+      a.fillStyle = PALETTE[fill];
+      a.fillRect(ox + 10, oy + 10 + bob, 12, 13);
+      a.fillStyle = PALETTE[shade];
+      a.fillRect(ox + 10, oy + 18 + bob, 12, 5);
+      a.fillStyle = PALETTE[25];
+      a.fillRect(ox + 12 + (f % 2), oy + 13 + bob, 2, 2);
+      a.fillRect(ox + 18 - (f % 2), oy + 13 + bob, 2, 2);
+    }
+  }
+  // 32: 플레이어 / 33: 투사체 / 34: 젬
+  const put = (idx, draw) => {
+    const ox = (idx % ATLAS_COLS) * ATLAS_TILE, oy = ((idx / ATLAS_COLS) | 0) * ATLAS_TILE;
+    draw(ox, oy);
+  };
+  put(32, (ox, oy) => {
+    a.fillStyle = PALETTE[31]; a.fillRect(ox + 10, oy + 8, 12, 17);
+    a.fillStyle = PALETTE[25]; a.fillRect(ox + 11, oy + 9, 10, 15);
+    a.fillStyle = PALETTE[15]; a.fillRect(ox + 11, oy + 17, 10, 7);
+  });
+  put(33, (ox, oy) => {
+    a.fillStyle = PALETTE[31]; a.fillRect(ox + 13, oy + 14, 6, 4);
+    a.fillStyle = PALETTE[11]; a.fillRect(ox + 14, oy + 15, 4, 2);
+  });
+  put(34, (ox, oy) => {
+    a.fillStyle = PALETTE[31]; a.fillRect(ox + 13, oy + 13, 6, 6);
+    a.fillStyle = PALETTE[16]; a.fillRect(ox + 14, oy + 14, 4, 4);
+  });
+}
+const FRAME_PLAYER = 32, FRAME_PROJ = 33, FRAME_GEM = 34;
+
+// ---------- §4 SoA 컴포넌트 배열 ----------
+const eX = new Float32Array(MAX_ENEMIES), eY = new Float32Array(MAX_ENEMIES);
+const eVX = new Float32Array(MAX_ENEMIES), eVY = new Float32Array(MAX_ENEMIES);
+const eHp = new Float32Array(MAX_ENEMIES), eType = new Uint8Array(MAX_ENEMIES);
+const eAnim = new Uint16Array(MAX_ENEMIES), eSpeed = new Float32Array(MAX_ENEMIES);
+let eCount = 0;
+
+const pX = new Float32Array(MAX_PROJ), pY = new Float32Array(MAX_PROJ);
+const pVX = new Float32Array(MAX_PROJ), pVY = new Float32Array(MAX_PROJ);
+const pLife = new Uint16Array(MAX_PROJ), pPierce = new Int8Array(MAX_PROJ);
+let pCount = 0;
+
+const gX = new Float32Array(MAX_GEMS), gY = new Float32Array(MAX_GEMS);
+const gVX = new Float32Array(MAX_GEMS), gVY = new Float32Array(MAX_GEMS);
+let gCount = 0;
+
+const paX = new Float32Array(MAX_PART), paY = new Float32Array(MAX_PART);
+const paVX = new Float32Array(MAX_PART), paVY = new Float32Array(MAX_PART);
+const paLife = new Uint16Array(MAX_PART), paColor = new Uint8Array(MAX_PART);
+let paCount = 0;
+
+// ---------- §6 공간 해시 그리드 ----------
+const cellStore = new Int16Array(NCELL * CELL_CAP);
+const cellCount = new Uint8Array(NCELL);
+function hashRebuild() {
+  cellCount.fill(0);
+  for (let i = 0; i < eCount; i++) {
+    const cx = (eX[i] / CELL) | 0, cy = (eY[i] / CELL) | 0;
+    if (cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS) continue;
+    const c = cy * COLS + cx, n = cellCount[c];
+    if (n < CELL_CAP) { cellStore[c * CELL_CAP + n] = i; cellCount[c] = n + 1; }
+  }
+}
+
+// ---------- 월드 상태 ----------
+const PLAYER_SPEED = 1.67; // 100 u/s — 실제 게임 기본 이동속도
+const player = { x: WORLD_W / 2, y: WORLD_H / 2, r: 6 };
+let frame = 0, targetEnemies = 400, killCount = 0;
+const removeList = new Int16Array(MAX_ENEMIES);
+const opt = { separation: true, particles: true, ysort: true, render: true, stand: false, fill: false };
+
+function spawnEnemy() {
+  if (eCount >= MAX_ENEMIES) return;
+  const i = eCount++;
+  const ang = rngSpawn() * TAU, dist = 200 + rngSpawn() * 80;
+  eX[i] = Math.max(8, Math.min(WORLD_W - 8, player.x + dCos(ang) * dist));
+  eY[i] = Math.max(8, Math.min(WORLD_H - 8, player.y + dSin(ang) * dist));
+  eVX[i] = 0; eVY[i] = 0;
+  eType[i] = (rngSpawn() * 8) | 0;
+  eHp[i] = 20 + (rngSpawn() * 30 | 0);
+  eSpeed[i] = 0.55 + rngSpawn() * 0.45;
+  eAnim[i] = (rngSpawn() * 240) | 0;
+}
+function removeEnemy(i) {
+  const last = --eCount;
+  if (i !== last) {
+    eX[i]=eX[last]; eY[i]=eY[last]; eVX[i]=eVX[last]; eVY[i]=eVY[last];
+    eHp[i]=eHp[last]; eType[i]=eType[last]; eAnim[i]=eAnim[last]; eSpeed[i]=eSpeed[last];
+  }
+}
+function spawnProj(x, y, vx, vy) {
+  if (pCount >= MAX_PROJ) return;
+  const i = pCount++;
+  pX[i]=x; pY[i]=y; pVX[i]=vx; pVY[i]=vy; pLife[i]=80; pPierce[i]=3;
+}
+function removeProj(i) {
+  const last = --pCount;
+  if (i !== last) { pX[i]=pX[last]; pY[i]=pY[last]; pVX[i]=pVX[last]; pVY[i]=pVY[last]; pLife[i]=pLife[last]; pPierce[i]=pPierce[last]; }
+}
+function spawnGem(x, y) {
+  if (gCount >= MAX_GEMS) return;
+  const i = gCount++; gX[i]=x; gY[i]=y; gVX[i]=0; gVY[i]=0;
+}
+function removeGem(i) {
+  const last = --gCount;
+  if (i !== last) { gX[i]=gX[last]; gY[i]=gY[last]; gVX[i]=gVX[last]; gVY[i]=gVY[last]; }
+}
+function spawnParticles(x, y, n) {
+  if (!opt.particles) return;
+  for (let k = 0; k < n && paCount < MAX_PART; k++) {
+    const i = paCount++, a = rngCos() * TAU, s = 0.6 + rngCos() * 1.4;
+    paX[i]=x; paY[i]=y; paVX[i]=dCos(a)*s; paVY[i]=dSin(a)*s;
+    paLife[i]=14 + (rngCos()*10|0); paColor[i]= 8 + (rngCos()*4|0);
+  }
+}
+function removeParticle(i) {
+  const last = --paCount;
+  if (i !== last) { paX[i]=paX[last]; paY[i]=paY[last]; paVX[i]=paVX[last]; paVY[i]=paVY[last]; paLife[i]=paLife[last]; paColor[i]=paColor[last]; }
+}
+
+// ---------- §5 시스템 실행 순서 ----------
+function step() {
+  frame++;
+
+  // 20. 플레이어 이동
+  //  v1 결함: 리사주 곡선을 위치에 직접 대입해 봇이 초당 259u로 움직였다.
+  //  실제 플레이어는 100u/s(1.67u/frame)이므로 봇이 적 무리를 따돌려
+  //  화면에 적이 거의 없었고, 렌더 부하가 측정되지 않았다.
+  //  → 목표점을 향해 실제 속도로 이동하도록 수정.
+  if (!opt.stand) {
+    const t = frame / 60;
+    const tx = WORLD_W / 2 + dSin(t * 0.21) * 900;
+    const ty = WORLD_H / 2 + dSin(t * 0.31 + 1.1) * 480;
+    const dx = tx - player.x, dy = ty - player.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > 0.01) {
+      const d = Math.sqrt(d2);
+      const stepLen = Math.min(PLAYER_SPEED, d);
+      player.x += (dx / d) * stepLen;
+      player.y += (dy / d) * stepLen;
+    }
+  }
+
+  // 30. 스폰 디렉터 — 목표 개체수 유지
+  const deficit = targetEnemies - eCount;
+  if (deficit > 0) { const n = Math.min(deficit, 12); for (let k = 0; k < n; k++) spawnEnemy(); }
+  else if (deficit < 0) { for (let k = 0; k < Math.min(-deficit, 12) && eCount > 0; k++) removeEnemy(eCount - 1); }
+
+  // 40/60. 적 AI + 이동
+  for (let i = 0; i < eCount; i++) {
+    const dx = player.x - eX[i], dy = player.y - eY[i];
+    const d2 = dx * dx + dy * dy;
+    if (d2 > 1) {
+      const inv = eSpeed[i] / Math.sqrt(d2);
+      eVX[i] = dx * inv; eVY[i] = dy * inv;
+    }
+    eX[i] += eVX[i]; eY[i] += eVY[i];
+    eAnim[i]++;
+  }
+
+  // 70. 공간 해시 재구축 (이동 후, 충돌 전)
+  hashRebuild();
+
+  // 50. 적 분리 — 인접 4셀만, 2프레임에 1회 (§6)
+  if (opt.separation && (frame & 1) === 0) {
+    for (let i = 0; i < eCount; i++) {
+      const cx = (eX[i] / CELL) | 0, cy = (eY[i] / CELL) | 0;
+      if (cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS) continue;
+      let px = 0, py = 0;
+      for (let oy = 0; oy <= 1; oy++) for (let ox = 0; ox <= 1; ox++) {
+        const nx = cx + ox, ny = cy + oy;
+        if (nx >= COLS || ny >= ROWS) continue;
+        const c = ny * COLS + nx, n = cellCount[c], base = c * CELL_CAP;
+        for (let k = 0; k < n; k++) {
+          const j = cellStore[base + k];
+          if (j === i) continue;
+          const dx = eX[i] - eX[j], dy = eY[i] - eY[j];
+          const d2 = dx * dx + dy * dy;
+          if (d2 > 0.01 && d2 < 196) { const w = (196 - d2) / 196 * 0.35; px += dx * w; py += dy * w; }
+        }
+      }
+      eX[i] += px * 0.1; eY[i] += py * 0.1;
+    }
+  }
+
+  // 80. 무기 발사 — 8방향 산탄, 12프레임마다
+  if (frame % 12 === 0) {
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * TAU + frame * 0.021;
+      spawnProj(player.x, player.y, dCos(a) * 4.2, dSin(a) * 4.2);
+    }
+  }
+
+  // 90. 투사체 이동
+  for (let i = pCount - 1; i >= 0; i--) {
+    pX[i] += pVX[i]; pY[i] += pVY[i];
+    if (--pLife[i] === 0 || pX[i] < 0 || pY[i] < 0 || pX[i] > WORLD_W || pY[i] > WORLD_H) removeProj(i);
+  }
+
+  // 100/110. 충돌 + 피해 처리 (그리드 조회, 원-원 판정)
+  let removeN = 0;
+  for (let i = pCount - 1; i >= 0; i--) {
+    const cx = (pX[i] / CELL) | 0, cy = (pY[i] / CELL) | 0;
+    if (cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS) continue;
+    let dead = false;
+    for (let oy = -1; oy <= 1 && !dead; oy++) for (let ox = -1; ox <= 1 && !dead; ox++) {
+      const nx = cx + ox, ny = cy + oy;
+      if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
+      const c = ny * COLS + nx, n = cellCount[c], base = c * CELL_CAP;
+      for (let k = 0; k < n; k++) {
+        const j = cellStore[base + k];
+        if (eHp[j] <= 0) continue;
+        const dx = pX[i] - eX[j], dy = pY[i] - eY[j];
+        if (dx * dx + dy * dy < 169) { // (7 + 6)^2
+          eHp[j] -= 14;
+          if (eHp[j] <= 0 && removeN < MAX_ENEMIES) {
+            removeList[removeN++] = j;
+            spawnGem(eX[j], eY[j]);
+            spawnParticles(eX[j], eY[j], 4);
+            killCount++;
+          }
+          if (--pPierce[i] <= 0) { removeProj(i); dead = true; break; }
+        }
+      }
+    }
+  }
+
+  // 130. 젬 흡수
+  for (let i = gCount - 1; i >= 0; i--) {
+    const dx = player.x - gX[i], dy = player.y - gY[i];
+    const d2 = dx * dx + dy * dy;
+    if (d2 < 3600) {
+      const inv = 3.2 / Math.sqrt(d2 + 0.001);
+      gX[i] += dx * inv; gY[i] += dy * inv;
+      if (d2 < 100) removeGem(i);
+    }
+  }
+
+  // 파티클 (Cosmetic — 시뮬 결과에 영향 없음)
+  for (let i = paCount - 1; i >= 0; i--) {
+    paX[i] += paVX[i]; paY[i] += paVY[i];
+    paVX[i] *= 0.92; paVY[i] *= 0.92;
+    if (--paLife[i] === 0) removeParticle(i);
+  }
+
+  // 170. 제거 목록 일괄 처리 — 인덱스 내림차순 (§1.4)
+  if (removeN > 0) {
+    const sub = removeList.subarray(0, removeN);
+    Array.prototype.sort.call(sub, (a, b) => b - a);
+    let prev = -1;
+    for (let k = 0; k < removeN; k++) { const idx = sub[k]; if (idx === prev) continue; prev = idx; if (idx < eCount) removeEnemy(idx); }
+  }
+}
+
+// ---------- §8 렌더 ----------
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+let scale = 1, portrait = false, viewW = VIEW_W, viewH = VIEW_H;
+
+const bg = document.createElement('canvas');
+function buildBackground() {
+  bg.width = viewW + CELL; bg.height = viewH + CELL;
+  const b = bg.getContext('2d');
+  for (let y = 0; y < bg.height; y += 32) for (let x = 0; x < bg.width; x += 32) {
+    b.fillStyle = ((x / 32 + y / 32) & 1) ? PALETTE[1] : PALETTE[2];
+    b.fillRect(x, y, 32, 32);
+    b.fillStyle = PALETTE[3]; b.fillRect(x, y, 32, 1); b.fillRect(x, y, 1, 32);
+  }
+}
+const BASE_SHORT = 270; // 짧은 축 논리 픽셀 목표
+function resize() {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  portrait = vh > vw;
+  if (opt.fill) {
+    // 화면채움: 정수 배율은 유지하되 내부 해상도를 화면 비율에 맞춘다.
+    // 픽셀 크기는 여전히 정확한 정수배라 도트가 뭉개지지 않는다.
+    scale = Math.max(1, Math.floor(Math.min(vw, vh) / BASE_SHORT));
+    viewW = Math.floor(vw / scale); viewH = Math.floor(vh / scale);
+  } else {
+    // 고정: TDD §2.2 원안 (480x270 / 270x480)
+    viewW = portrait ? 270 : 480; viewH = portrait ? 480 : 270;
+    scale = Math.max(1, Math.floor(Math.min(vw / viewW, vh / viewH)));
+  }
+  canvas.width = viewW; canvas.height = viewH;
+  canvas.style.width = (viewW * scale) + 'px';
+  canvas.style.height = (viewH * scale) + 'px';
+  ctx.imageSmoothingEnabled = false;
+  buildBackground();
+}
+window.addEventListener('resize', resize);
+
+// Y 버킷 정렬용 (셀 행 단위 카운팅 소트)
+const rowCount = new Uint16Array(ROWS + 1);
+const rowStart = new Uint32Array(ROWS + 2);
+const sortedIdx = new Int16Array(MAX_ENEMIES);
+let drawCalls = 0, visibleEnemies = 0;
+
+function draw() {
+  drawCalls = 0;
+  const camX = Math.round(Math.max(0, Math.min(WORLD_W - viewW, player.x - viewW / 2)));
+  const camY = Math.round(Math.max(0, Math.min(WORLD_H - viewH, player.y - viewH / 2)));
+
+  // 레이어 0: 배경 (오프스크린 blit)
+  ctx.drawImage(bg, -(camX % 32), -(camY % 32)); drawCalls++;
+
+  // 레이어 3: 젬
+  for (let i = 0; i < gCount; i++) {
+    const x = (gX[i] - camX) | 0, y = (gY[i] - camY) | 0;
+    if (x < -16 || y < -16 || x > viewW + 16 || y > viewH + 16) continue;
+    ctx.drawImage(atlas, 0, 64, 32, 32, x - 16, y - 16, 32, 32); drawCalls++;
+  }
+
+  // 레이어 4: 적 (Y 정렬)
+  let n = 0;
+  if (opt.ysort) {
+    rowCount.fill(0);
+    for (let i = 0; i < eCount; i++) {
+      const x = eX[i] - camX, y = eY[i] - camY;
+      if (x < -32 || y < -32 || x > viewW + 32 || y > viewH + 32) continue;
+      const r = Math.max(0, Math.min(ROWS - 1, (eY[i] / CELL) | 0));
+      rowCount[r]++; n++;
+    }
+    rowStart[0] = 0;
+    for (let r = 0; r < ROWS; r++) rowStart[r + 1] = rowStart[r] + rowCount[r];
+    const cursor = rowStart.slice(0, ROWS);
+    for (let i = 0; i < eCount; i++) {
+      const x = eX[i] - camX, y = eY[i] - camY;
+      if (x < -32 || y < -32 || x > viewW + 32 || y > viewH + 32) continue;
+      const r = Math.max(0, Math.min(ROWS - 1, (eY[i] / CELL) | 0));
+      sortedIdx[cursor[r]++] = i;
+    }
+  } else {
+    for (let i = 0; i < eCount; i++) {
+      const x = eX[i] - camX, y = eY[i] - camY;
+      if (x < -32 || y < -32 || x > viewW + 32 || y > viewH + 32) continue;
+      sortedIdx[n++] = i;
+    }
+  }
+  visibleEnemies = n;
+  for (let k = 0; k < n; k++) {
+    const i = sortedIdx[k];
+    const f = eType[i] * 4 + ((eAnim[i] >> 3) & 3);
+    const sx = (f % ATLAS_COLS) * 32, sy = ((f / ATLAS_COLS) | 0) * 32;
+    ctx.drawImage(atlas, sx, sy, 32, 32, (eX[i] - camX - 16) | 0, (eY[i] - camY - 16) | 0, 32, 32);
+    drawCalls++;
+  }
+
+  // 레이어 5: 플레이어
+  ctx.drawImage(atlas, 0, 64, 32, 32, (player.x - camX - 16) | 0, (player.y - camY - 16) | 0, 32, 32); drawCalls++;
+
+  // 레이어 6: 투사체
+  for (let i = 0; i < pCount; i++) {
+    const x = (pX[i] - camX) | 0, y = (pY[i] - camY) | 0;
+    if (x < -16 || y < -16 || x > viewW + 16 || y > viewH + 16) continue;
+    ctx.drawImage(atlas, 32, 64, 32, 32, x - 16, y - 16, 32, 32); drawCalls++;
+  }
+
+  // 레이어 7: 파티클 (fillRect 배치)
+  if (opt.particles && paCount > 0) {
+    let cur = -1;
+    for (let i = 0; i < paCount; i++) {
+      const x = (paX[i] - camX) | 0, y = (paY[i] - camY) | 0;
+      if (x < 0 || y < 0 || x >= viewW || y >= viewH) continue;
+      if (paColor[i] !== cur) { cur = paColor[i]; ctx.fillStyle = PALETTE[cur]; drawCalls++; }
+      ctx.fillRect(x, y, 2, 2);
+    }
+  }
+}
+
+// ---------- 계측 ----------
+//  iOS Safari는 performance.now()를 1ms로 클램프한다. 프레임당 0.2ms를 재려 하면
+//  전부 0 또는 1로 찍혀 무의미하다. 그래서 두 가지를 함께 쓴다.
+//   (a) FPS: 프레임 "개수"를 시간으로 나눈다 — 개별 타임스탬프 정밀도와 무관
+//   (b) 로직/렌더 비용: 한 프레임 안에서 N회 반복 실행해 총시간을 나눈다 (배치 측정)
+let timerRes = 0;
+(function detectTimerRes() {
+  let prev = performance.now(), min = Infinity, iter = 0;
+  while (iter++ < 300000 && min === Infinity) {
+    const t = performance.now();
+    if (t > prev) { min = t - prev; }
+  }
+  timerRes = min === Infinity ? 1 : min;
+})();
+
+const HIST = 240;
+const frameHist = new Float64Array(HIST);
+let histN = 0, histI = 0;
+function pushSample(ft) { frameHist[histI] = ft; histI = (histI + 1) % HIST; if (histN < HIST) histN++; }
+function pct(arr, n, p) {
+  if (n === 0) return 0;
+  const tmp = Array.prototype.slice.call(arr, 0, n).sort((a, b) => a - b);
+  return tmp[Math.min(n - 1, Math.max(0, Math.round((n - 1) * p)))];
+}
+function resetHist() { histN = 0; histI = 0; }
+
+// 배치 측정 — 타이머 클램프를 우회한다
+function measureLogicUs(iters) {
+  const t0 = performance.now();
+  for (let i = 0; i < iters; i++) step();
+  const t1 = performance.now();
+  return ((t1 - t0) / iters) * 1000; // µs
+}
+function measureRenderUs(iters) {
+  const t0 = performance.now();
+  for (let i = 0; i < iters; i++) draw();
+  const t1 = performance.now();
+  return ((t1 - t0) / iters) * 1000; // µs
+}
+
+// ---------- 루프 ----------
+let acc = 0, prev = performance.now(), running = true;
+const hud = document.getElementById('hud');
+let hudTick = 0;
+
+function loop(now) {
+  requestAnimationFrame(loop);
+  if (!running) { prev = now; return; }
+  const delta = Math.min(now - prev, 250);
+  prev = now;
+  acc += delta;
+
+  let steps = 0;
+  while (acc >= FIXED_DT_MS && steps < MAX_CATCHUP) { step(); acc -= FIXED_DT_MS; steps++; }
+  if (steps === MAX_CATCHUP) acc = 0;
+  if (opt.render) draw();
+
+  pushSample(delta);
+  if (auto.active) autoTick(now, delta);
+  if (++hudTick % 12 === 0) updateHud();
+}
+
+function liveFps() {
+  const med = pct(frameHist, histN, 0.5);
+  return med > 0 ? 1000 / med : 0;
+}
+
+function updateHud() {
+  const fps = liveFps();
+  const worst = pct(frameHist, histN, 0.98);
+  const cls = fps >= 57 ? 'ok' : fps >= 44 ? 'warn' : 'bad';
+  hud.innerHTML =
+    `<span class="${cls}">FPS ~${fps.toFixed(1)}   최악 프레임 ${worst.toFixed(0)}ms</span>\n` +
+    `적 ${eCount} (화면 <b>${visibleEnemies}</b>)  투사체 ${pCount}  젬 ${gCount}  파티클 ${paCount}\n` +
+    `드로우콜 ${drawCalls}   ${viewW}x${viewH} @${scale}x ${opt.fill ? '채움' : '고정'}   타이머정밀도 ${timerRes}ms\n` +
+    `프레임 ${frame}` +
+    (auto.active ? `\n<span class="warn">자동 벤치: ${auto.label} (${Math.max(0, auto.remain / 1000).toFixed(1)}s)</span>` : '');
+}
+
+// ---------- 자동 벤치마크 ----------
+const STAGES = [
+  { n: 200,  label: '적 200' },
+  { n: 400,  label: '적 400 (모바일 목표)' },
+  { n: 800,  label: '적 800 (PC 목표)' },
+  { n: 1200, label: '적 1200' },
+  { n: 1600, label: '적 1600 (한계 탐색)' },
+];
+const auto = {
+  active: false, idx: 0, remain: 0, warm: 0, label: '',
+  t0: 0, frames: 0, longFrames: 0, worst: 0,
+  visSum: 0, dcSum: 0, samples: 0,
+  results: [],
+};
+
+function startAuto() {
+  auto.active = true; auto.idx = 0; auto.results = [];
+  document.getElementById('results').innerHTML = '';
+  document.getElementById('verdict').textContent = '측정 중…';
+  enterStage(0);
+}
+function enterStage(i) {
+  targetEnemies = STAGES[i].n; auto.label = STAGES[i].label;
+  auto.warm = 2000; auto.remain = 4000;
+  auto.frames = 0; auto.longFrames = 0; auto.worst = 0;
+  auto.visSum = 0; auto.dcSum = 0; auto.samples = 0; auto.t0 = 0;
+  resetHist();
+}
+function autoTick(now, delta) {
+  if (auto.warm > 0) { auto.warm -= delta; if (auto.warm <= 0) { resetHist(); auto.t0 = now; } return; }
+  auto.remain -= delta;
+  auto.frames++;
+  if (delta > 20) auto.longFrames++;
+  if (delta > auto.worst) auto.worst = delta;
+  auto.visSum += visibleEnemies; auto.dcSum += drawCalls; auto.samples++;
+
+  if (auto.remain <= 0) {
+    const elapsed = now - auto.t0;
+    const fps = elapsed > 0 ? (auto.frames * 1000) / elapsed : 0;
+    // 배치 측정 (렌더 상태를 흔들지 않도록 순서 주의)
+    const logicUs = measureLogicUs(150);
+    const renderUs = opt.render ? measureRenderUs(60) : 0;
+    auto.results.push({
+      stage: STAGES[auto.idx].label,
+      enemies: STAGES[auto.idx].n,
+      fps: +fps.toFixed(1),
+      longFramePct: +((auto.longFrames / Math.max(1, auto.frames)) * 100).toFixed(1),
+      worstMs: +auto.worst.toFixed(0),
+      avgVisible: Math.round(auto.visSum / Math.max(1, auto.samples)),
+      avgDrawCalls: Math.round(auto.dcSum / Math.max(1, auto.samples)),
+      logicMs: +(logicUs / 1000).toFixed(3),
+      renderMs: +(renderUs / 1000).toFixed(3),
+    });
+    renderResults();
+    auto.idx++;
+    if (auto.idx >= STAGES.length) { auto.active = false; finishAuto(); }
+    else enterStage(auto.idx);
+  }
+}
+function renderResults() {
+  let h = '<h3>측정 결과</h3><table><tr><th class="l">구간</th><th>FPS</th><th>긴프레임%</th><th>최악ms</th>' +
+          '<th>화면 적</th><th>드로우콜</th><th>로직ms</th><th>렌더ms</th></tr>';
+  for (const r of auto.results) {
+    const fc = r.fps >= 57 ? 'pass' : r.fps >= 44 ? '' : 'fail';
+    h += `<tr><td class="l">${r.stage}</td><td class="${fc}">${r.fps}</td><td>${r.longFramePct}</td><td>${r.worstMs}</td>` +
+         `<td>${r.avgVisible}</td><td>${r.avgDrawCalls}</td><td>${r.logicMs}</td><td>${r.renderMs}</td></tr>`;
+  }
+  document.getElementById('results').innerHTML = h + '</table>';
+}
+function finishAuto() {
+  const r400 = auto.results.find(r => r.enemies === 400);
+  const r800 = auto.results.find(r => r.enemies === 800);
+  const mark = b => b ? '<span class="pass">합격</span>' : '<span class="fail">불합격</span>';
+
+  // 부하 도달 검사 — 이게 통과해야 나머지 판정이 의미를 가진다
+  const loadOk = r800 && r800.avgVisible >= 120;
+  let v = '';
+  if (!loadOk) {
+    v += `<span class="fail">⚠ 부하 미도달</span> — 적 800 구간에서 화면에 평균 ${r800 ? r800.avgVisible : '?'}기만 있었다.\n` +
+         `봇이 무리를 따돌렸거나 스폰 반경이 너무 넓다는 뜻이며, <b>이 측정은 렌더 성능을 대표하지 않는다.</b>\n` +
+         `'정지 모드'를 켜고 다시 측정할 것.\n\n`;
+  }
+
+  const mobilePass = r400 && r400.fps >= 45 && r400.longFramePct <= 5;
+  const pcPass = r800 && r800.fps >= 57;
+  const budgetPass = r800 && r800.logicMs <= 6 && r800.renderMs <= 8;
+
+  v += `<b>TDD §9 판정</b>\n`;
+  v += `모바일 (적 400 → 45FPS, 긴프레임 ≤5%): ${mark(mobilePass)}  실측 ${r400 ? r400.fps + ' FPS / ' + r400.longFramePct + '%' : '-'}\n`;
+  v += `PC (적 800 → 60FPS): ${mark(pcPass)}  실측 ${r800 ? r800.fps + ' FPS' : '-'}\n`;
+  v += `프레임 예산 (로직 ≤6ms, 렌더 ≤8ms @800): ${mark(budgetPass)}  실측 로직 ${r800 ? r800.logicMs : '-'} / 렌더 ${r800 ? r800.renderMs : '-'}\n\n`;
+
+  if (r800 && loadOk) {
+    const ratio = r800.renderMs / Math.max(0.001, r800.logicMs);
+    v += ratio > 2
+      ? `<b>병목: 렌더</b> — 렌더가 로직의 ${ratio.toFixed(1)}배다. Canvas 2D 드로우콜이 한계라는 뜻이며, 불합격 시 WebGL(PixiJS) 전환이 유효한 처방이다.`
+      : ratio < 0.5
+      ? `<b>병목: 로직</b> — 렌더러를 바꿔도 개선되지 않는다. 충돌·분리 알고리즘 최적화가 먼저다.`
+      : `<b>병목: 균형</b> — 양쪽이 비슷하다. 둘 다 손봐야 목표에 도달한다.`;
+  }
+  if (timerRes >= 1) {
+    v += `\n\n<span class="warn">주의</span> 이 브라우저의 타이머 정밀도는 ${timerRes}ms다 (iOS Safari 등).\n` +
+         `FPS는 프레임 개수 기반이라 신뢰할 수 있고, 로직/렌더 ms는 배치 측정이라 신뢰할 수 있다.\n` +
+         `다만 '최악ms' 같은 개별 프레임 값은 ${timerRes}ms 단위로 반올림된 값이다.`;
+  }
+  v += `\n\n판정은 <b>중급 안드로이드 실기</b>에서 다시 측정해 확정한다. 고사양 기기 합격은 하한을 보장하지 않는다.`;
+  document.getElementById('verdict').innerHTML = v;
+}
+
+// ---------- UI ----------
+document.getElementById('btnAuto').onclick = () => { running = true; startAuto(); };
+document.getElementById('btnStop').onclick = () => { auto.active = false; };
+document.querySelectorAll('[data-n]').forEach(b => {
+  b.onclick = () => { auto.active = false; targetEnemies = +b.dataset.n; resetHist(); };
+});
+const toggle = (id, key, on, off) => {
+  const el = document.getElementById(id);
+  el.onclick = () => { opt[key] = !opt[key]; el.classList.toggle('on', opt[key]); el.textContent = opt[key] ? on : off; resetHist(); };
+};
+toggle('tSep', 'separation', '적 분리 ON', '적 분리 OFF');
+toggle('tPart', 'particles', '파티클 ON', '파티클 OFF');
+toggle('tYsort', 'ysort', 'Y정렬 ON', 'Y정렬 OFF');
+toggle('tRender', 'render', '렌더 ON', '렌더 OFF');
+// 정지 모드: 봇을 세워 적을 최대로 밀집시킨다 — 최악 조건 측정
+{
+  const el = document.getElementById('tStand');
+  el.onclick = () => { opt.stand = !opt.stand; el.classList.toggle('on', opt.stand);
+    el.textContent = opt.stand ? '정지 모드 ON' : '정지 모드 OFF'; resetHist(); };
+}
+// 뷰포트 모드: 고정(480x270) vs 화면채움(정수배율 유지, 내부해상도 가변)
+{
+  const el = document.getElementById('tFill');
+  el.onclick = () => { opt.fill = !opt.fill; el.classList.toggle('on', opt.fill);
+    el.textContent = opt.fill ? '뷰포트 채움' : '뷰포트 고정'; resize(); resetHist(); };
+}
+document.getElementById('btnCopy').onclick = () => {
+  const payload = {
+    benchVersion: 2,
+    device: navigator.userAgent, dpr: devicePixelRatio,
+    screen: innerWidth + 'x' + innerHeight,
+    view: viewW + 'x' + viewH, scale,
+    viewportMode: opt.fill ? 'fill' : 'fixed',
+    standMode: opt.stand,
+    timerResolutionMs: timerRes,
+    results: auto.results,
+  };
+  const text = JSON.stringify(payload, null, 2);
+  if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => alert('결과를 복사했습니다'));
+  else alert(text);
+};
+
+document.getElementById('meta').textContent =
+  `bench v2 | ${navigator.userAgent} | DPR ${devicePixelRatio} | ${innerWidth}x${innerHeight} | 타이머 ${timerRes}ms`;
+
+resize();
+requestAnimationFrame(loop);
+
+// ---------- §1.6 월드 해시 (FNV-1a) ----------
+//  Cosmetic 스트림(파티클)은 의도적으로 제외한다. 기기 성능에 따라 달라져도
+//  게임 결과에 영향이 없어야 하며, 그러려면 해시에 들어가면 안 된다.
+const hashBuf = new Float64Array(1);
+const hashView = new Uint32Array(hashBuf.buffer);
+function foldF(h, v) {
+  hashBuf[0] = v;
+  h = (Math.imul(h ^ hashView[0], 16777619)) >>> 0;
+  h = (Math.imul(h ^ hashView[1], 16777619)) >>> 0;
+  return h;
+}
+function worldHash() {
+  let h = 2166136261 >>> 0;
+  h = (Math.imul(h ^ frame, 16777619)) >>> 0;
+  h = (Math.imul(h ^ eCount, 16777619)) >>> 0;
+  h = (Math.imul(h ^ killCount, 16777619)) >>> 0;
+  for (let i = 0; i < eCount; i++) { h = foldF(h, eX[i]); h = foldF(h, eY[i]); h = foldF(h, eHp[i]); }
+  for (let i = 0; i < pCount; i++) { h = foldF(h, pX[i]); h = foldF(h, pY[i]); }
+  for (let i = 0; i < gCount; i++) { h = foldF(h, gX[i]); h = foldF(h, gY[i]); }
+  return h >>> 0;
+}
+
+function resetWorld(seed) {
+  seedStreams(seed === undefined ? MASTER_SEED : seed);
+  eCount = 0; pCount = 0; gCount = 0; paCount = 0;
+  frame = 0; killCount = 0; acc = 0;
+  player.x = WORLD_W / 2; player.y = WORLD_H / 2;
+  resetHist();
+}
+
+// 헤드리스 검증용 훅
+window.__bench = {
+  step, draw, worldHash, resetWorld, startAuto,
+  pause: () => { running = false; },
+  resume: () => { running = true; prev = performance.now(); },
+  setTarget: n => { targetEnemies = n; },
+  setOpt: (k, v) => { opt[k] = v; },
+  get frame() { return frame; },
+  get eCount() { return eCount; },
+  get kills() { return killCount; },
+  get results() { return auto.results; },
+  get visible() { return visibleEnemies; },
+  get drawCalls() { return drawCalls; },
+};
+</script>
+</body>
+</html>
