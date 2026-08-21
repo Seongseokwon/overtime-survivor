@@ -17,15 +17,27 @@ import { projectileMovement } from './90-projectile';
 import { collision, playerDamage } from './100-collision';
 import { pickup } from './130-pickup';
 import { levelUp } from './140-levelup';
+import { statusEffects } from './160-status';
 import { cleanup } from './170-cleanup';
 
 /**
  * 월드를 정확히 한 프레임 전진시킨다.
  * dt 를 받지 않는다 — 프레임이 곧 시간 단위다 (TDD §1.1).
  */
+/**
+ * 한 프레임에 이만큼 처치되면 히트스톱을 건다.
+ * 잡몹 하나마다 걸면 게임이 계속 끊기므로, "무리가 한 번에 터진" 순간만 잡는다.
+ */
+const HITSTOP_KILL_THRESHOLD = 6;
+const HITSTOP_FRAMES = 3;
+
 export function stepWorld(w: World, input: InputFrame): void {
   // 카드 선택 대기 중에는 시뮬레이션이 멈춘다.
   if (w.pendingChoice) return;
+
+  // 히트스톱: 화면을 흔드는 대신 시간을 멈춰 타격을 강조한다.
+  // 시뮬 안에 있으므로 리플레이가 정확히 재현된다.
+  if (w.hitstop > 0) { w.hitstop--; return; }
 
   w.frame++;
   w.elapsedFrames++;
@@ -42,5 +54,8 @@ export function stepWorld(w: World, input: InputFrame): void {
   playerDamage(w);            // 110
   pickup(w);                  // 130
   levelUp(w);                 // 140
+  statusEffects(w);           // 160
   cleanup(w);                 // 170
+
+  if (w.fx.killsThisFrame >= HITSTOP_KILL_THRESHOLD) w.hitstop = HITSTOP_FRAMES;
 }

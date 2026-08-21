@@ -49,6 +49,11 @@ export function weaponFire(w: World): void {
       }
     }
 
+    // 발사 반동 — 플레이어 스프라이트만 반대 방향으로 밀린다
+    const ra = aimAtNearest(w);
+    w.fx.recoilX -= dCos(ra) * 1.2;
+    w.fx.recoilY -= dSin(ra) * 1.2;
+
     const cd = Math.max(6, Math.round(lv.cooldownFrames * (1 - w.player.cooldownReduction)));
     slot.cooldown = cd;
   }

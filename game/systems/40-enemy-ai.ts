@@ -19,7 +19,9 @@ export function enemyAI(w: World): void {
 
 export function enemyMovement(w: World): void {
   for (let i = 0; i < w.eCount; i++) {
-    w.eX[i] = w.eX[i]! + w.eVX[i]!;
-    w.eY[i] = w.eY[i]! + w.eVY[i]!;
+    // 넉백은 추적 속도에 더해진다. 밀려나는 동안에도 계속 다가오므로
+    // 물량이 "밀렸다가 다시 몰려온다"는 압박감이 유지된다.
+    w.eX[i] = w.eX[i]! + w.eVX[i]! + w.eKbX[i]!;
+    w.eY[i] = w.eY[i]! + w.eVY[i]! + w.eKbY[i]!;
   }
 }

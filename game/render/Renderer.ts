@@ -19,8 +19,11 @@ export interface Renderer {
 
   beginFrame(cameraX: number, cameraY: number): void;
   drawBackground(): void;
-  drawSprite(frameIndex: number, x: number, y: number, flipX: boolean): void;
+  /** white=true 면 흰 실루엣으로 그린다 (피격 플래시). squash 는 -2~2 픽셀 눌림. */
+  drawSprite(frameIndex: number, x: number, y: number, flipX: boolean, white?: boolean, squash?: number): void;
   drawRect(x: number, y: number, w: number, h: number, color: number, alpha: number): void;
+  /** 월드 좌표에 텍스트. 데미지 팝업 전용이므로 개수를 제한해서 쓴다. */
+  drawTextWorld(text: string, x: number, y: number, cssColor: string, alpha: number): void;
   endFrame(): void;
 
   destroy(): void;

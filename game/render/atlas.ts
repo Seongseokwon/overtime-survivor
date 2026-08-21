@@ -20,6 +20,15 @@ export const FRAME_PLAYER = 32;
 export const FRAME_PROJECTILE = 33;
 export const FRAME_GEM = 34;
 
+/** 장식 프레임 (decor.ts 와 인덱스를 맞춘다) */
+export const FRAME_DESK = 40;
+export const FRAME_PARTITION_V = 41;
+export const FRAME_PARTITION_H = 42;
+export const FRAME_PLANT = 43;
+export const FRAME_CABINET = 44;
+export const FRAME_STAIN = 45;
+export const FRAME_PAPERS = 46;
+
 export function buildPlaceholderAtlas(): HTMLCanvasElement {
   const cv = document.createElement('canvas');
   cv.width = 512; cv.height = 512;
@@ -62,5 +71,86 @@ export function buildPlaceholderAtlas(): HTMLCanvasElement {
     a.fillStyle = PALETTE[31]; a.fillRect(ox + 13, oy + 13, 6, 6);
     a.fillStyle = PALETTE[16]; a.fillRect(ox + 14, oy + 14, 4, 4);
   }
+
+  // ── 장식 ─────────────────────────────────────────────
+  // 바닥보다 뚜렷하되 적보다는 눈에 덜 띄어야 한다. 적을 가리면 안 되므로
+  // 채도를 낮추고 빨강 계열은 쓰지 않는다 (PRD §6.2 — 빨강은 위험 요소 전용).
+  {
+    const [ox, oy] = at(FRAME_DESK);           // 책상
+    a.fillStyle = PALETTE[29]; a.fillRect(ox + 3, oy + 12, 26, 14);
+    a.fillStyle = PALETTE[26]; a.fillRect(ox + 4, oy + 10, 24, 12);
+    a.fillStyle = PALETTE[27]; a.fillRect(ox + 6, oy + 12, 20, 2);
+    a.fillStyle = PALETTE[22]; a.fillRect(ox + 4, oy + 10, 24, 1);   // 윗면 하이라이트
+    a.fillStyle = PALETTE[3];  a.fillRect(ox + 8, oy + 5, 12, 6);   // 모니터
+    a.fillStyle = PALETTE[2];  a.fillRect(ox + 9, oy + 6, 10, 4);
+  }
+  {
+    const [ox, oy] = at(FRAME_PARTITION_V);    // 세로 파티션
+    a.fillStyle = PALETTE[3]; a.fillRect(ox + 12, oy + 2, 8, 28);
+    a.fillStyle = PALETTE[2]; a.fillRect(ox + 13, oy + 3, 6, 26);
+    a.fillStyle = PALETTE[22]; a.fillRect(ox + 13, oy + 2, 6, 1);
+    a.fillStyle = PALETTE[3]; a.fillRect(ox + 13, oy + 9, 6, 1);
+    a.fillRect(ox + 13, oy + 20, 6, 1);
+  }
+  {
+    const [ox, oy] = at(FRAME_PARTITION_H);    // 가로 파티션
+    a.fillStyle = PALETTE[3]; a.fillRect(ox + 2, oy + 12, 28, 8);
+    a.fillStyle = PALETTE[2]; a.fillRect(ox + 3, oy + 13, 26, 6);
+    a.fillStyle = PALETTE[22]; a.fillRect(ox + 2, oy + 12, 28, 1);
+    a.fillStyle = PALETTE[3]; a.fillRect(ox + 10, oy + 13, 1, 6);
+    a.fillRect(ox + 21, oy + 13, 1, 6);
+  }
+  {
+    const [ox, oy] = at(FRAME_PLANT);          // 화분
+    a.fillStyle = PALETTE[14]; a.fillRect(ox + 12, oy + 6, 8, 10);
+    a.fillStyle = PALETTE[14]; a.fillRect(ox + 10, oy + 9, 12, 5);
+    a.fillStyle = PALETTE[13]; a.fillRect(ox + 12, oy + 8, 8, 1);
+    a.fillStyle = PALETTE[26]; a.fillRect(ox + 12, oy + 18, 8, 8);
+    a.fillStyle = PALETTE[29]; a.fillRect(ox + 13, oy + 19, 6, 6);
+  }
+  {
+    const [ox, oy] = at(FRAME_CABINET);        // 캐비닛
+    a.fillStyle = PALETTE[2];  a.fillRect(ox + 6, oy + 4, 20, 24);
+    a.fillStyle = PALETTE[3];  a.fillRect(ox + 7, oy + 5, 18, 22);
+    a.fillStyle = PALETTE[22]; a.fillRect(ox + 6, oy + 4, 20, 1);
+    a.fillStyle = PALETTE[2];  a.fillRect(ox + 9, oy + 9, 14, 1);
+    a.fillRect(ox + 9, oy + 17, 14, 1);
+    a.fillStyle = PALETTE[2];  a.fillRect(ox + 14, oy + 12, 4, 2);
+  }
+  {
+    const [ox, oy] = at(FRAME_STAIN);          // 카펫 얼룩 (바닥)
+    a.fillStyle = PALETTE[2];
+    a.fillRect(ox + 8, oy + 12, 16, 8);
+    a.fillRect(ox + 11, oy + 9, 10, 14);
+    a.fillRect(ox + 6, oy + 14, 20, 4);
+  }
+  {
+    const [ox, oy] = at(FRAME_PAPERS);         // 흩어진 종이 (바닥)
+    a.fillStyle = PALETTE[3];
+    a.fillRect(ox + 9, oy + 14, 7, 5);
+    a.fillRect(ox + 17, oy + 11, 6, 4);
+    a.fillRect(ox + 13, oy + 20, 5, 4);
+  }
+
+  return cv;
+}
+
+/**
+ * 흰 실루엣 아틀라스.
+ *
+ * 피격 플래시를 스프라이트마다 tint 하면 500마리에서 비싸진다.
+ * 아틀라스 전체를 흰색으로 한 번 구워두고, 플래시 중인 적은 이쪽에서
+ * 그리면 추가 비용이 0이다. 도트 아트에서 특히 잘 먹는 고전 기법이다.
+ */
+export function buildWhiteAtlas(src: HTMLCanvasElement): HTMLCanvasElement {
+  const cv = document.createElement('canvas');
+  cv.width = src.width; cv.height = src.height;
+  const c = cv.getContext('2d')!;
+  c.imageSmoothingEnabled = false;
+  c.drawImage(src, 0, 0);
+  c.globalCompositeOperation = 'source-in';
+  c.fillStyle = '#ffffff';
+  c.fillRect(0, 0, cv.width, cv.height);
+  c.globalCompositeOperation = 'source-over';
   return cv;
 }
