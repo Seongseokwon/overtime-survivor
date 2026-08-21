@@ -1,14 +1,21 @@
 'use client';
 
+export interface CardMaterial { name: string; level: number }
+
 export interface ChoiceCard {
-  /** 무기 이름 */
+  kind: 'weapon' | 'craft';
+  /** 무기 이름 (합성이면 결과물 이름) */
   name: string;
   /** 한 줄 설명 */
   desc: string;
-  /** 'NEW' 또는 'Lv.2 → Lv.3' */
+  /** 'NEW' / 'Lv.2 → 3' / '합성' */
   label: string;
   isNew: boolean;
+  /** 합성 카드일 때 소비되는 재료 */
+  materials?: CardMaterial[];
 }
+
+export interface SlotView { name: string; level: number; tier: number }
 
 export interface HudSnapshot {
   hp: number;
@@ -23,18 +30,28 @@ export interface HudSnapshot {
   choices: ChoiceCard[] | null;
   /** 0~1. 피격 직후 1이 되고 서서히 0으로 간다 */
   hitPulse: number;
+  /** 현재 보유 무기 슬롯 */
+  slots: SlotView[];
+  /** 한 프레임에 시뮬이 2회 이상 돈 비율(%). 0에 가까워야 매끄럽다 */
+  hitchPct: number;
+  paused: boolean;
+  /** 창을 내려서 자동으로 멈춘 것인지 (직접 누른 것과 문구를 구분한다) */
+  pausedByBlur: boolean;
 }
+
+const MAX_SLOTS = 5;
 
 /**
  * HUD는 DOM으로 그린다 (TDD §8.1).
  * 캔버스에 텍스트를 그리면 매 프레임 폰트 래스터화가 일어나 비싸고,
  * 접근성·다국어·폰트 렌더링을 전부 직접 해결해야 한다.
  */
-export default function Hud({ snapshot, onChoose }: {
+export default function Hud({ snapshot, onChoose, onResume }: {
   snapshot: HudSnapshot;
   onChoose: (index: number) => void;
+  onResume: () => void;
 }) {
-  const { hp, maxHp, level, xp, xpToNext, seconds, kills, enemies, fps, choices, hitPulse } = snapshot;
+  const { hp, maxHp, level, xp, xpToNext, seconds, kills, enemies, fps, choices, hitPulse, slots, hitchPct, paused, pausedByBlur } = snapshot;
   const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
   const ss = String(seconds % 60).padStart(2, '0');
 
@@ -57,8 +74,38 @@ export default function Hud({ snapshot, onChoose }: {
         </div>
         <Bar value={xp} max={xpToNext} color="#1f6feb" />
         <Bar value={hp} max={maxHp} color="#f85149" />
-        <div className="os-debug">적 {enemies} · {fps} FPS</div>
+        <div className="os-debug">
+          적 {enemies} · {fps} FPS · 스텝이상 {hitchPct.toFixed(1)}%
+        </div>
+
+        {/*
+          무기 슬롯을 상시 노출한다. 합성은 "뭘 버리고 뭘 얻는가"의 판단인데,
+          지금 뭘 들고 있는지 안 보이면 그 판단 자체가 불가능하다.
+        */}
+        <div className="os-slots">
+          {Array.from({ length: MAX_SLOTS }, (_, i) => {
+            const s = slots[i];
+            if (!s) return <span key={i} className="os-slot is-empty" />;
+            return (
+              <span key={i} className={`os-slot${s.tier > 0 ? ' is-craft' : ''}`}>
+                {s.name}<b>{s.level}</b>
+              </span>
+            );
+          })}
+        </div>
       </div>
+
+      {paused && !choices && (
+        <div className="os-overlay" role="dialog" aria-label="일시정지">
+          <div className="os-pauseTitle">일시정지</div>
+          <p className="os-pauseDesc">
+            {pausedByBlur
+              ? '창을 내리면 게임이 자동으로 멈춥니다.\n자리를 비운 사이 죽지 않도록 시간도 함께 멈춥니다.'
+              : '아무 때나 ESC 로 멈출 수 있습니다.'}
+          </p>
+          <button className="os-resume" onClick={onResume} autoFocus>계속하기</button>
+        </div>
+      )}
 
       {choices && (
         <div className="os-overlay" role="dialog" aria-label="레벨업 보상 선택">
@@ -67,13 +114,26 @@ export default function Hud({ snapshot, onChoose }: {
             {choices.map((c, i) => (
               <button
                 key={`${c.name}-${i}`}
-                className={`os-card${c.isNew ? ' is-new' : ''}`}
+                className={`os-card${c.isNew ? ' is-new' : ''}${c.kind === 'craft' ? ' is-craft' : ''}`}
                 style={{ animationDelay: `${i * 60}ms` }}
                 onClick={() => onChoose(i)}
               >
                 <span className="os-badge">{c.label}</span>
                 <span className="os-cardName">{c.name}</span>
                 <span className="os-cardDesc">{c.desc}</span>
+                {c.materials && (
+                  <span className="os-recipe">
+                    {c.materials.map((m, k) => (
+                      <span key={k}>
+                        {k > 0 && <i className="os-plus">+</i>}
+                        <em>{m.name} {m.level}</em>
+                      </span>
+                    ))}
+                    <i className="os-arrow">→</i>
+                    <strong>{c.name}</strong>
+                    <i className="os-slotHint">슬롯 −1</i>
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -106,6 +166,18 @@ const CSS = `
 .os-bar { height: 4px; background: #1c2230; border-radius: 2px; margin-top: 5px; overflow: hidden; }
 .os-debug { color: #3d4653; margin-top: 5px; }
 
+.os-slots { display: flex; gap: 4px; margin-top: 7px; }
+.os-slot {
+  flex: 1 1 0; min-width: 0; height: 17px; border-radius: 4px;
+  background: #1c2230; border: 1px solid #2e3746; color: #8b949e;
+  font-size: 9px; line-height: 15px; text-align: center;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.os-slot b { color: #eef2f7; margin-left: 3px; }
+.os-slot.is-empty { background: #12161e; border-style: dashed; border-color: #232a36; }
+.os-slot.is-craft { border-color: #ffe08a66; color: #ffe08a; background: #ffe08a14; }
+.os-slot.is-craft b { color: #ffe08a; }
+
 .os-vignette {
   position: fixed; inset: 0; pointer-events: none; z-index: 15;
   box-shadow: inset 0 0 70px 12px rgba(248, 81, 73, 0.55);
@@ -122,6 +194,19 @@ const CSS = `
   animation: os-fade 140ms ease-out;
 }
 @keyframes os-fade { from { opacity: 0 } to { opacity: 1 } }
+
+.os-pauseTitle {
+  color: #eef2f7; font-size: 20px; font-weight: 700; letter-spacing: 0.16em;
+}
+.os-pauseDesc {
+  color: #8b949e; font-size: 11px; line-height: 1.9; text-align: center;
+  margin: 0; white-space: pre-line;
+}
+.os-resume {
+  margin-top: 6px; background: #1f6feb; color: #fff; border: 0; border-radius: 8px;
+  padding: 13px 30px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer;
+}
+.os-resume:active { transform: scale(.97); }
 
 .os-levelTag {
   color: #ffe08a; font-size: 13px; font-weight: 700; letter-spacing: 0.22em;
@@ -143,6 +228,25 @@ const CSS = `
 .os-card:hover { border-color: #4a5568; background: #1a212d; }
 .os-card:active { transform: scale(.97); }
 .os-card.is-new { border-color: #1f6feb88; }
+
+/* 합성 카드는 확실히 달라 보여야 한다 — 놓치면 아까운 선택지다 */
+.os-card.is-craft {
+  border-color: #ffe08a99;
+  background: linear-gradient(160deg, #241f14 0%, #151a24 60%);
+  box-shadow: 0 10px 30px #00000066, 0 0 0 1px #ffe08a22;
+}
+.os-card.is-craft .os-badge { color: #ffe08a; background: #ffe08a22; }
+.os-card.is-craft .os-cardName { color: #ffe08a; }
+
+.os-recipe {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  margin-top: 2px; padding-top: 8px; border-top: 1px dashed #ffe08a33;
+  font-size: 10px; color: #8b949e;
+}
+.os-recipe em { font-style: normal; color: #c8d0dc; background: #1c2230; border-radius: 3px; padding: 2px 5px; }
+.os-recipe strong { color: #ffe08a; font-weight: 700; }
+.os-plus, .os-arrow { font-style: normal; color: #6e7a8a; }
+.os-slotHint { font-style: normal; color: #7ee787; margin-left: auto; font-size: 9px; }
 
 .os-badge {
   align-self: flex-start;

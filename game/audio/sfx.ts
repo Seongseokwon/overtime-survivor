@@ -41,6 +41,11 @@ export class Sfx {
     void this.ctx?.resume();
   }
 
+  /** 일시정지 중에는 오디오 컨텍스트를 재워 CPU/배터리를 아낀다 */
+  suspend(): void {
+    void this.ctx?.suspend();
+  }
+
   setMuted(v: boolean): void {
     this._muted = v;
     if (this.master) this.master.gain.value = v ? 0 : 0.25;

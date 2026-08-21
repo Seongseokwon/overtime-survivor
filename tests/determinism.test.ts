@@ -74,7 +74,9 @@ describe('결정론 시뮬레이션 (TDD §1)', () => {
     const a = simulate(0x1234, 3600);
     expect(a.kills).toBeGreaterThan(50);
     expect(a.level).toBeGreaterThan(2);
-    expect(a.enemies).toBeGreaterThan(20);
+    // 살아있는 적 수는 무기가 세질수록 줄어든다. 콘텐츠 밸런스에 딸려
+    // 흔들리는 값이므로 "월드가 비어있지 않다" 정도만 확인한다.
+    expect(a.enemies).toBeGreaterThan(5);
     expect(a.weapons).toBeGreaterThan(1);
   });
 

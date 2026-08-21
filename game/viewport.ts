@@ -29,9 +29,20 @@ export function computeViewport(vw: number, vh: number, mode: ViewportMode): Vie
   return { viewW, viewH, scale, portrait };
 }
 
+/**
+ * 카메라 위치.
+ *
+ * 화면 중심 오프셋을 **정수로** 잡는 게 중요하다.
+ * fill 모드에서는 viewW 가 홀수일 수 있는데(예: 393), `viewW / 2` 를 쓰면
+ * 오프셋에 .5 가 붙는다. 카메라는 픽셀 그리드에 스냅해야 하므로 반올림되는데,
+ * 그 반올림이 프레임마다 뒤집히면서 화면 전체가 1px씩 떨린다.
+ * floor 로 정수 오프셋을 만들면 플레이어 화면 좌표가 완전히 고정된다.
+ */
 export function cameraFor(px: number, py: number, viewW: number, viewH: number, worldW: number, worldH: number): { x: number; y: number } {
+  const halfW = Math.floor(viewW / 2);
+  const halfH = Math.floor(viewH / 2);
   return {
-    x: Math.max(0, Math.min(worldW - viewW, px - viewW / 2)),
-    y: Math.max(0, Math.min(worldH - viewH, py - viewH / 2)),
+    x: Math.max(0, Math.min(worldW - viewW, Math.round(px) - halfW)),
+    y: Math.max(0, Math.min(worldH - viewH, Math.round(py) - halfH)),
   };
 }

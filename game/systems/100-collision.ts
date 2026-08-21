@@ -1,11 +1,13 @@
 import type { World } from '../ecs/world';
-import { removeProjectile, spawnGem, fxDeath, fxSpark, fxDamage } from '../ecs/world';
+import { removeProjectile, spawnGem, fxDeath, fxSpark, ProjKind } from '../ecs/world';
 import { CELL, GRID_COLS, GRID_ROWS, CELL_CAPACITY, PLAYER_RADIUS } from '../core/constants';
 import { dSqrt } from '../core/fixedmath';
 
 const HIT_R2 = 169; // (적 7u + 투사체 6u)^2
 const FLASH_FRAMES = 4;
 const KNOCKBACK = 1.6;
+/** 궤도 무기가 같은 자리를 계속 때리지 않도록 하는 간격 */
+const ORBIT_HIT_COOLDOWN = 10;
 
 /**
  * 투사체↔적 충돌.
@@ -17,6 +19,9 @@ export function collision(w: World): void {
   w.fx.killsThisFrame = 0;
 
   for (let i = w.pCount - 1; i >= 0; i--) {
+    // 궤도처럼 오래 남는 투사체는 관통이 무제한이라, 재타격 쿨다운이 없으면
+    // 같은 적을 매 프레임 때려 즉사시킨다.
+    if (w.pHitCd[i]! > 0) continue;
     const cx = (w.pX[i]! / CELL) | 0;
     const cy = (w.pY[i]! / CELL) | 0;
     if (cx < 0 || cy < 0 || cx >= GRID_COLS || cy >= GRID_ROWS) continue;
@@ -53,7 +58,6 @@ export function collision(w: World): void {
             }
           }
           fxSpark(w, w.pX[i]!, w.pY[i]!);
-          fxDamage(w, w.eX[j]!, w.eY[j]!, dmg);
 
           if (w.eHp[j]! <= 0) {
             spawnGem(w, w.eX[j]!, w.eY[j]!, def.drops.gemValue);
@@ -64,6 +68,12 @@ export function collision(w: World): void {
             w.fx.killsPending++;
           }
 
+          // 관통 무제한(-1)은 소모되지 않는다. 대신 재타격 쿨다운이 붙는다.
+          if (w.pPierce[i]! < 0) {
+            if (w.pKind[i] === ProjKind.Orbit) w.pHitCd[i] = ORBIT_HIT_COOLDOWN;
+            consumed = true;
+            break;
+          }
           const pierce = w.pPierce[i]! - 1;
           w.pPierce[i] = pierce;
           if (pierce <= 0) { removeProjectile(w, i); consumed = true; break; }

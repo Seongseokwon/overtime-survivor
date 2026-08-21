@@ -28,6 +28,7 @@ export const DEFAULT_PICKUP_RANGE = 60;
 export const MAX_ENEMIES = 1024;
 export const MAX_PROJECTILES = 2048;
 export const MAX_GEMS = 4096;
+export const MAX_ZONES = 128;
 
 // --- 엔티티 플래그 비트 ---
 export const FLAG_ALIVE = 1 << 0;

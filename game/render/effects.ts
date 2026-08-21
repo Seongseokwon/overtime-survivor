@@ -1,12 +1,11 @@
 /**
- * 렌더 계층 이펙트 — 파편 파티클과 데미지 팝업.
+ * 렌더 계층 이펙트 — 파편 파티클.
  *
  * 여기는 시뮬레이션 밖이다. Math.random 을 자유롭게 쓸 수 있고,
  * 기기 성능에 따라 개수를 줄여도 게임 결과에 영향이 없다.
  * 시뮬은 "어디서 무슨 일이 일어났는가"만 FxBuffer 로 알려준다.
  */
 import type { Renderer } from './Renderer';
-import { PALETTE } from './atlas';
 
 // ── 파편 파티클 ──────────────────────────────────────────
 
@@ -83,61 +82,4 @@ export class ParticleField {
       r.drawRect(this.x[i]! - s / 2, this.y[i]! - s / 2, s, s, this.color[i]!, t > 1 ? 1 : t);
     }
   }
-}
-
-// ── 데미지 누적 팝업 ─────────────────────────────────────
-
-const MAX_POPUPS = 24;
-/** 이 거리 안에서 이 시간 안에 들어온 피해는 하나로 합친다 */
-const MERGE_RADIUS2 = 18 * 18;
-const MERGE_WINDOW = 24; // 프레임 (0.4초)
-
-interface Popup { x: number; y: number; amount: number; age: number; born: number; hot: number }
-
-/**
- * 뱀서라이크에서 모든 피격에 숫자를 띄우면 화면이 숫자로 뒤덮여 적이 안 보인다.
- * 그래서 가까운 위치에 짧은 시간 안에 들어온 피해를 하나로 합쳐 표시한다.
- * 정보는 다 주면서 화면은 덜 덮는다.
- */
-export class DamagePopups {
-  private list: Popup[] = [];
-
-  add(x: number, y: number, amount: number): void {
-    for (let i = 0; i < this.list.length; i++) {
-      const p = this.list[i]!;
-      if (p.age > MERGE_WINDOW) continue;
-      const dx = p.x - x, dy = p.y - y;
-      if (dx * dx + dy * dy < MERGE_RADIUS2) {
-        p.amount += amount;
-        p.x = x; p.y = Math.min(p.y, y);
-        p.hot = 4;              // 합산될 때마다 살짝 커진다
-        return;
-      }
-    }
-    if (this.list.length >= MAX_POPUPS) this.list.shift();
-    this.list.push({ x, y: y - 10, amount, age: 0, born: 0, hot: 4 });
-  }
-
-  update(dt: number): void {
-    for (let i = this.list.length - 1; i >= 0; i--) {
-      const p = this.list[i]!;
-      p.age += dt;
-      p.born += dt;
-      p.y -= 0.22 * dt;
-      if (p.hot > 0) p.hot -= dt;
-      if (p.age > MERGE_WINDOW + 22) this.list.splice(i, 1);
-    }
-  }
-
-  draw(r: Renderer): void {
-    for (let i = 0; i < this.list.length; i++) {
-      const p = this.list[i]!;
-      const fadeStart = MERGE_WINDOW + 6;
-      const alpha = p.age < fadeStart ? 1 : Math.max(0, 1 - (p.age - fadeStart) / 16);
-      const color = p.amount >= 60 ? PALETTE[10] : p.amount >= 25 ? PALETTE[11] : PALETTE[23];
-      r.drawTextWorld(String(Math.round(p.amount)), p.x, p.y, color, alpha);
-    }
-  }
-
-  get active(): number { return this.list.length; }
 }

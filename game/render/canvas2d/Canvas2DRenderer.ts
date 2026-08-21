@@ -105,8 +105,10 @@ export class Canvas2DRenderer implements Renderer {
   drawSprite(frameIndex: number, x: number, y: number, _flipX: boolean, white = false, squash = 0): void {
     const sx = (frameIndex % ATLAS_COLS) * ATLAS_TILE;
     const sy = Math.floor(frameIndex / ATLAS_COLS) * ATLAS_TILE;
-    const dx = (x - this.camX - 16) | 0;
-    const dy = (y - this.camY - 16) | 0;
+    // 카메라와 같은 방식(반올림)으로 스냅해야 한다.
+    // 여기서 `| 0`(절삭)을 쓰면 카메라의 Math.round 와 어긋나 1px 지터가 생긴다.
+    const dx = Math.round(x) - this.camX - 16;
+    const dy = Math.round(y) - this.camY - 16;
     if (dx < -ATLAS_TILE || dy < -ATLAS_TILE || dx > this.viewW || dy > this.viewH) return;
     const src = white ? this.atlasWhite : this.atlas;
     if (squash === 0) {
@@ -120,28 +122,34 @@ export class Canvas2DRenderer implements Renderer {
     this.stats.drawCalls++;
   }
 
-  drawTextWorld(text: string, x: number, y: number, cssColor: string, alpha: number): void {
-    const dx = (x - this.camX) | 0;
-    const dy = (y - this.camY) | 0;
-    if (dx < -40 || dy < -20 || dx > this.viewW + 40 || dy > this.viewH + 20) return;
-    const ctx = this.ctx;
-    ctx.globalAlpha = alpha;
-    ctx.font = '8px ui-monospace, monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#000000';
-    ctx.fillText(text, dx + 1, dy + 1);
-    ctx.fillStyle = cssColor;
-    ctx.fillText(text, dx, dy);
-    ctx.globalAlpha = 1;
-    this.stats.drawCalls++;
-  }
-
   drawRect(x: number, y: number, w: number, h: number, color: number, alpha: number): void {
     this.ctx.globalAlpha = alpha;
     this.ctx.fillStyle = PALETTE[color] ?? '#ffffff';
-    this.ctx.fillRect((x - this.camX) | 0, (y - this.camY) | 0, w, h);
+    this.ctx.fillRect(Math.round(x) - this.camX, Math.round(y) - this.camY, w, h);
     this.ctx.globalAlpha = 1;
+    this.stats.drawCalls++;
+  }
+
+  /**
+   * 픽셀 원 — 가로 스캔라인을 쌓아 만든다.
+   * ctx.arc 는 안티에일리어싱이 걸려 도트 화면에서 흐릿한 테두리를 남긴다.
+   * 반경이 크면 2픽셀 간격으로 건너뛰어 드로우콜을 절반으로 줄인다.
+   */
+  drawCircle(x: number, y: number, radius: number, color: number, alpha: number): void {
+    const cx = Math.round(x) - this.camX;
+    const cy = Math.round(y) - this.camY;
+    const r = Math.round(radius);
+    if (cx + r < 0 || cy + r < 0 || cx - r > this.viewW || cy - r > this.viewH) return;
+
+    const ctx = this.ctx;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = PALETTE[color] ?? '#ffffff';
+    const step = r > 40 ? 2 : 1;
+    for (let dy = -r; dy <= r; dy += step) {
+      const half = Math.floor(Math.sqrt(r * r - dy * dy));
+      ctx.fillRect(cx - half, cy + dy, half * 2 + 1, step);
+    }
+    ctx.globalAlpha = 1;
     this.stats.drawCalls++;
   }
 
