@@ -24,6 +24,7 @@ function foldInt(h: number, v: number): number {
 export function worldHash(w: World): number {
   let h = 2166136261 >>> 0;
   h = foldInt(h, w.frame);
+  h = foldInt(h, w.characterIndex);
   h = foldInt(h, w.eCount);
   h = foldInt(h, w.pCount);
   h = foldInt(h, w.gCount);
@@ -33,6 +34,7 @@ export function worldHash(w: World): number {
   h = foldFloat(h, w.player.y);
   h = foldFloat(h, w.player.hp);
   h = foldFloat(h, w.player.xp);
+  h = foldFloat(h, w.player.payMultiplier);
   for (let i = 0; i < w.eCount; i++) {
     h = foldFloat(h, w.eX[i]!); h = foldFloat(h, w.eY[i]!); h = foldFloat(h, w.eHp[i]!);
   }

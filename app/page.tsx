@@ -17,7 +17,7 @@ export default function Home() {
       }}>
         출근하기
       </Link>
-      <p style={{ color: '#3d4653', fontSize: 11, margin: 0 }}>M1 스캐폴딩 — 이동 + 자동공격 + 레벨업</p>
+      <p style={{ color: '#3d4653', fontSize: 11, margin: 0 }}>인턴 J — 빠른 이동 + 형광펜 장판</p>
     </main>
   );
 }

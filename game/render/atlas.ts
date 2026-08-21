@@ -19,6 +19,8 @@ export const PALETTE = [
 export const FRAME_PLAYER = 32;
 export const FRAME_PROJECTILE = 33;
 export const FRAME_GEM = 34;
+/** 인턴 J — 형광펜 색 포인트와 빠른 실루엣을 구분하는 임시 프레임 */
+export const FRAME_PLAYER_INTERN = 35;
 
 /** 장식 프레임 (decor.ts 와 인덱스를 맞춘다) */
 export const FRAME_DESK = 40;
@@ -60,6 +62,18 @@ export function buildPlaceholderAtlas(): HTMLCanvasElement {
     a.fillStyle = PALETTE[31]; a.fillRect(ox + 10, oy + 8, 12, 17);
     a.fillStyle = PALETTE[25]; a.fillRect(ox + 11, oy + 9, 10, 15);
     a.fillStyle = PALETTE[15]; a.fillRect(ox + 11, oy + 17, 10, 7);
+  }
+  {
+    // 인턴 J: 밝은 셔츠, 형광펜 포인트, 한 칸 위로 튄 머리카락.
+    // 실제 도트 에셋으로 교체할 때도 FRAME_PLAYER_INTERN을 유지한다.
+    const [ox, oy] = at(FRAME_PLAYER_INTERN);
+    a.fillStyle = PALETTE[31]; a.fillRect(ox + 9, oy + 7, 14, 19);
+    a.fillStyle = PALETTE[24]; a.fillRect(ox + 10, oy + 9, 12, 16);
+    a.fillStyle = PALETTE[15]; a.fillRect(ox + 11, oy + 18, 10, 7);
+    a.fillStyle = PALETTE[18]; a.fillRect(ox + 10, oy + 7, 12, 3);
+    a.fillStyle = PALETTE[10]; a.fillRect(ox + 21, oy + 13, 3, 9);
+    a.fillStyle = PALETTE[25]; a.fillRect(ox + 12, oy + 13, 2, 2);
+    a.fillRect(ox + 18, oy + 13, 2, 2);
   }
   {
     const [ox, oy] = at(FRAME_PROJECTILE);

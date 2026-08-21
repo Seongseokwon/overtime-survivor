@@ -25,6 +25,7 @@ import Hud, { type ChoiceCard, type HudSnapshot, type SlotView } from './Hud';
  * 엔드리스 랭킹이 붙는 M6 전에 최종 결정한다.
  */
 const VIEWPORT_MODE: ViewportMode = 'fill';
+const PLAYABLE_CHARACTER_ID = 'intern_j';
 
 /** 레벨업 카드에 표시할 정보를 만든다. */
 function buildCards(world: World): ChoiceCard[] {
@@ -75,6 +76,7 @@ export default function GameCanvas() {
   const worldRef = useRef<World | null>(null);
   const resumeRef = useRef<() => void>(() => {});
   const [snapshot, setSnapshot] = useState<HudSnapshot>({
+    characterName: '인턴 J',
     hp: 100, maxHp: 100, level: 1, xp: 0, xpToNext: 5,
     seconds: 0, kills: 0, enemies: 0, fps: 0, choices: null, hitPulse: 0, slots: [],
     hitchPct: 0, paused: false, pausedByBlur: false,
@@ -86,8 +88,10 @@ export default function GameCanvas() {
 
     // 시드는 나중에 서버가 발급한다 (PRD §10.5). 지금은 로컬 난수로 시작.
     const seed = (Math.random() * 0xffffffff) >>> 0;
-    const world = createWorld(seed, CONTENT);
-    world.weapons.push({ defIndex: 0, level: 1, cooldown: 0 });
+    const world = createWorld(seed, CONTENT, PLAYABLE_CHARACTER_ID);
+    const character = CONTENT.characters.find((c) => c.id === PLAYABLE_CHARACTER_ID) ?? CONTENT.characters[0]!;
+    const startingWeaponIndex = CONTENT.weapons.findIndex((w) => w.id === character.startingWeaponId);
+    if (startingWeaponIndex >= 0) world.weapons.push({ defIndex: startingWeaponIndex, level: 1, cooldown: 0 });
     worldRef.current = world;
 
     const renderer = new Canvas2DRenderer();
@@ -200,6 +204,7 @@ export default function GameCanvas() {
           // HUD는 게임 상태를 직접 구독하지 않는다. 30Hz로 throttle한 스냅샷만 받는다 (TDD §8.1)
           if (++hudTick % 20 !== 0) return;
           setSnapshot({
+            characterName: CONTENT.characters[world.characterIndex]?.nameKo ?? '알 수 없는 캐릭터',
             hp: Math.ceil(world.player.hp), maxHp: world.player.maxHp,
             level: world.player.level, xp: world.player.xp, xpToNext: world.player.xpToNext,
             seconds: Math.floor(world.elapsedFrames / FPS),

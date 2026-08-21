@@ -207,7 +207,7 @@ const enemy = (
 });
 
 export const CONTENT: ContentPack = {
-  contentVersion: 4,
+  contentVersion: 5,
   weapons: [
     stapler, ballpen, businessCard, wirelessMouse, umbrella, highlighter, coffee,  // 0~6 기본
     approvalBoard, revolvingDoor, espressoBomb, droneSwarm,                        // 7~10 T1
@@ -288,13 +288,25 @@ export const CONTENT: ContentPack = {
       specials: [],
     },
   }],
-  characters: [{
-    id: 'char_k', nameKo: '사원 K', sprite: 'char/k',
-    startingWeaponId: 'stapler',
-    modifiers: [{ stat: 'payMultiplier', op: 'add', value: 0.1 }],
-    unlockAfterRuns: 0,
-    descKo: '3년차. 특별할 것 없지만 수당은 조금 더 챙긴다.',
-  }],
+  characters: [
+    {
+      id: 'char_k', nameKo: '사원 K', sprite: 'char/k',
+      startingWeaponId: 'stapler',
+      modifiers: [{ stat: 'payMultiplier', op: 'add', value: 0.1 }],
+      unlockAfterRuns: 0,
+      descKo: '3년차. 특별할 것 없지만 수당은 조금 더 챙긴다.',
+    },
+    {
+      id: 'intern_j', nameKo: '인턴 J', sprite: 'char/intern_j',
+      startingWeaponId: 'highlighter',
+      modifiers: [
+        { stat: 'moveSpeed', op: 'mul', value: 1.2 },
+        { stat: 'maxHp', op: 'mul', value: 0.75 },
+      ],
+      unlockAfterRuns: 0,
+      descKo: '일을 빨리 배우는 대신, 체력은 아직 야근에 익숙하지 않다.',
+    },
+  ],
   modes: [
     { id: 'standard', nameKo: '정규 야근', durationFrames: sec(480), timeScale: 1.0, escalateAfterEnd: false, rankingEnabled: false, unlockAfterRuns: 0 },
     { id: 'short',    nameKo: '칼퇴 러시', durationFrames: sec(240), timeScale: 2.0, escalateAfterEnd: false, rankingEnabled: false, unlockAfterRuns: 2 },

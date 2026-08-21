@@ -21,6 +21,7 @@ export interface PlayerState {
   damageMul: number;
   cooldownReduction: number;
   pickupRange: number;
+  payMultiplier: number;
   level: number;
   xp: number;
   xpToNext: number;
@@ -75,6 +76,8 @@ export interface World {
   frame: number;
   rng: RngSet;
   content: ContentPack;
+  /** content.characters 의 인덱스. 리플레이 헤더의 characterId와 같은 의미다. */
+  characterIndex: number;
 
   player: PlayerState;
   weapons: WeaponSlot[];
@@ -169,22 +172,67 @@ function buildRecipeIndex(content: ContentPack): RecipeIndex[] {
   }));
 }
 
-export function createWorld(seed: number, content: ContentPack): World {
+function applyCharacterModifiers(w: World, characterIndex: number): void {
+  const character = w.content.characters[characterIndex];
+  if (!character) return;
+
+  const apply = (base: number, op: 'add' | 'mul' | 'ratio', value: number): number => {
+    if (op === 'add') return base + value;
+    if (op === 'mul') return base * value;
+    return base + value;
+  };
+
+  for (const modifier of character.modifiers) {
+    switch (modifier.stat) {
+      case 'maxHp':
+        w.player.maxHp = apply(w.player.maxHp, modifier.op, modifier.value);
+        w.player.hp = w.player.maxHp;
+        break;
+      case 'moveSpeed':
+        w.player.moveSpeed = apply(w.player.moveSpeed, modifier.op, modifier.value);
+        break;
+      case 'damageMul':
+        w.player.damageMul = apply(w.player.damageMul, modifier.op, modifier.value);
+        break;
+      case 'cooldownReduction':
+        w.player.cooldownReduction = Math.min(0.6, Math.max(0, apply(w.player.cooldownReduction, modifier.op, modifier.value)));
+        break;
+      case 'pickupRange':
+        w.player.pickupRange = apply(w.player.pickupRange, modifier.op, modifier.value);
+        break;
+      case 'payMultiplier':
+        w.player.payMultiplier = apply(w.player.payMultiplier, modifier.op, modifier.value);
+        break;
+      default:
+        // projectileCount, defense 등 아직 PlayerState에 없는 축은
+        // 콘텐츠 데이터에 보존하고 해당 시스템이 생길 때 연결한다.
+        break;
+    }
+  }
+}
+
+export function createWorld(seed: number, content: ContentPack, characterId?: string): World {
+  const characterIndex = characterId
+    ? content.characters.findIndex((c) => c.id === characterId)
+    : 0;
+  const resolvedCharacterIndex = characterIndex >= 0 ? characterIndex : 0;
+
   const w: World = {
     frame: 0,
     rng: createRngSet(seed),
     content,
+    characterIndex: resolvedCharacterIndex,
     player: {
       x: WORLD_W / 2, y: WORLD_H / 2,
       hp: 100, maxHp: 100,
-      // 정확히 2px/frame (= 120 u/s).
-      // 픽셀아트는 카메라를 정수로 스냅해야 하는데, 속도가 1.67 이면
-      // 카메라가 2,2,1,2,2,1 픽셀씩 불규칙하게 움직여 미세하게 덜컹인다.
-      // 정수 속도면 카디널 방향 스크롤이 완전히 균일해진다.
+      // 기본 캐릭터는 정확히 2px/frame (= 120 u/s)로 시작한다.
+      // 캐릭터 보정으로 소수 속도가 될 수 있지만, 카메라는 여전히 픽셀 그리드에
+      // 스냅된다. 실제 캐릭터별 모션 보정은 플레이테스트에서 조정한다.
       moveSpeed: 2,
       damageMul: 1,
       cooldownReduction: 0,
       pickupRange: 60,
+      payMultiplier: 1,
       level: 1, xp: 0, xpToNext: 5,
     },
     weapons: [],
@@ -238,6 +286,7 @@ export function createWorld(seed: number, content: ContentPack): World {
       killsThisFrame: 0, killsPending: 0,
     },
   };
+  applyCharacterModifiers(w, resolvedCharacterIndex);
   for (let i = 0; i < content.recipes.length; i++) {
     if (content.recipes[i]!.discoveredByDefault) w.recipeDiscovered[i] = 1;
   }

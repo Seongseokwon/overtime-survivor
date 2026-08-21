@@ -18,6 +18,7 @@ export interface ChoiceCard {
 export interface SlotView { name: string; level: number; tier: number }
 
 export interface HudSnapshot {
+  characterName: string;
   hp: number;
   maxHp: number;
   level: number;
@@ -51,7 +52,7 @@ export default function Hud({ snapshot, onChoose, onResume }: {
   onChoose: (index: number) => void;
   onResume: () => void;
 }) {
-  const { hp, maxHp, level, xp, xpToNext, seconds, kills, enemies, fps, choices, hitPulse, slots, hitchPct, paused, pausedByBlur } = snapshot;
+  const { characterName, hp, maxHp, level, xp, xpToNext, seconds, kills, enemies, fps, choices, hitPulse, slots, hitchPct, paused, pausedByBlur } = snapshot;
   const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
   const ss = String(seconds % 60).padStart(2, '0');
 
@@ -68,7 +69,7 @@ export default function Hud({ snapshot, onChoose, onResume }: {
 
       <div className="os-top">
         <div className="os-topRow">
-          <span>Lv.{level}</span>
+          <span>{characterName} · Lv.{level}</span>
           <span className="os-clock">{mm}:{ss}</span>
           <span>{kills} kills</span>
         </div>

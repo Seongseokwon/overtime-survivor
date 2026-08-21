@@ -9,7 +9,7 @@
  */
 import type { World } from '../ecs/world';
 import type { Renderer } from './Renderer';
-import { FRAME_GEM, FRAME_PLAYER, FRAME_PROJECTILE } from './atlas';
+import { FRAME_GEM, FRAME_PLAYER, FRAME_PLAYER_INTERN, FRAME_PROJECTILE } from './atlas';
 import { forEachDecor } from './decor';
 import { WORLD_W, WORLD_H } from '../core/constants';
 import type { ParticleField } from './effects';
@@ -48,7 +48,10 @@ export function drawWorld(
     r.drawSprite(w.eDefId[i]! * 4 + anim, w.eX[i]!, w.eY[i]!, false, flash > 0, squash);
   }
 
-  r.drawSprite(FRAME_PLAYER, w.player.x, w.player.y, false);
+  const playerFrame = w.content.characters[w.characterIndex]?.id === 'intern_j'
+    ? FRAME_PLAYER_INTERN
+    : FRAME_PLAYER;
+  r.drawSprite(playerFrame, w.player.x, w.player.y, false);
 
   for (let i = 0; i < w.pCount; i++) r.drawSprite(FRAME_PROJECTILE, w.pX[i]!, w.pY[i]!, false);
 
