@@ -94,5 +94,4 @@ docs/        PRD, TDD, 셋업, M0 결정서
 - [ ] 무기 발사 방식 확장: boomerang / orbit / aoe / trail
 - [ ] Y 정렬 (셀 행 버킷 카운팅 소트)
 - [ ] 접촉 무적 타이머 (개체별)
-- [ ] 무기 합성 시스템
 - [ ] 아트 파이프라인 (`tools/sprite-normalize`, `sprite-validate`, `atlas-build`)
