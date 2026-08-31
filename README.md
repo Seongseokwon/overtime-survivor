@@ -9,8 +9,11 @@
 
 ## 현재 상태 — M1 스캐폴딩 + 인턴 J 플레이테스트
 
-동작하는 것: 이동(키보드·터치), 자동 공격, 적 스폰·추적, 충돌, 경험치 젬, 레벨업 3택, 무기 성장, 무기 합성, 인턴 J 캐릭터 보정.
-아직 없는 것: 오버타임 게이지, 보스, 메타 진행, 백엔드.
+동작하는 것: 이동(키보드·터치), 자동 공격(직선·산탄·부메랑·궤도·장판·자기장판 6가지 발사 방식),
+적 스폰·추적, 충돌, 개체별 접촉 무적 타이머, 경험치 젬, 레벨업 3택, 무기 성장,
+무기 합성(T1 재료 → T2 재귀 합성까지), 캐릭터 보정(사원 K · 인턴 J 2종, 현재 플레이는 인턴 J).
+아직 없는 것: 오버타임 게이지, 보스, 적 행동 다양화(현재 전 적이 단순 추적만 함 — 원거리/돌진/분열은
+스키마만 정의돼 있고 시스템 미구현), 메타 진행, 백엔드.
 
 캐릭터 적용 문서: `docs/CHARACTER-INTERN-J.md`
 
@@ -81,7 +84,9 @@ game/
   render/    Renderer 인터페이스 + Canvas2D 구현
   input/     InputFrame 인코딩, 키보드, 터치
   replay/    입력 로그
-tests/       결정론, fixedmath
+  audio/     효과음
+tests/       결정론, 합성, 캐릭터, 발사 방식, 게임 필, fixedmath
+tools/       개발용 스크립트 (스크린샷 등 — 아트 파이프라인은 아직 없음)
 m0/          성능 벤치마크 (별도 실행)
 docs/        PRD, TDD, 셋업, M0 결정서
 ```
@@ -90,9 +95,7 @@ docs/        PRD, TDD, 셋업, M0 결정서
 
 - [ ] `tools/gen-sintable.ts` — sin 테이블을 상수로 사전 생성 (플랫폼 간 완전 동일성)
 - [ ] 골든 리플레이 테스트 (`tests/golden/`)
-- [ ] 적 행동 확장: ranged / charge / splitter
-- [ ] 무기 발사 방식 확장: boomerang / orbit / aoe / trail
-- [ ] Y 정렬 (셀 행 버킷 카운팅 소트)
-- [ ] 접촉 무적 타이머 (개체별)
-- [ ] 무기 합성 시스템
+- [ ] 적 행동 확장: ranged / charge / splitter (스키마의 `EnemyBehavior`에는 이미 정의돼 있음 —
+      `game/systems/40-enemy-ai.ts`에 실제 케이스 구현만 남았다)
+- [ ] Y 정렬 (셀 행 버킷 카운팅 소트) — `game/render/drawWorld.ts`에 위치 표시됨
 - [ ] 아트 파이프라인 (`tools/sprite-normalize`, `sprite-validate`, `atlas-build`)
